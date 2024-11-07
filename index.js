@@ -52,24 +52,24 @@ module.exports = class HyperswarmRPC {
   async request (publicKey, method, value, options) {
     const ref = this._getCachedClient(publicKey, options)
 
-    ref.active()
+    ref.activate()
 
     try {
       return ref.client.request(method, value, options)
     } finally {
-      await ref.inactive()
+      await ref.deactivate()
     }
   }
 
   event (publicKey, method, value, options) {
     const ref = this._getCachedClient(publicKey, options)
 
-    ref.active()
+    ref.activate()
 
     try {
       ref.client.event(method, value, options)
     } finally {
-      ref.inactive()
+      ref.deactivate()
     }
   }
 
@@ -131,13 +131,15 @@ module.exports = class HyperswarmRPC {
 }
 
 class ClientRef {
-  constructor (client, poolLinger, oninactive) {
+  constructor (client, poolLinger, onInactive) {
     this.activity = 0
     this.client = client
     this.poolLinger = poolLinger
-    this.oninactive = oninactive
+    this.onInactive = onInactive
     this.timeout = null
-    this.client.on('close', oninactive)
+    this.destroyed = false
+
+    this.client.on('close', onInactive)
   }
 
   clear () {
@@ -152,18 +154,16 @@ class ClientRef {
     this.client.destroy()
   }
 
-  active () {
+  activate () {
     if (this.destroyed) return
     this.clear()
     this.activity++
   }
 
-  inactive () {
-    if (this.destroyed) return
-    this.activity--
-    if (this.activity === 0) {
-      this.timeout = setTimeout(this.oninactive, this.poolLinger)
-    }
+  deactivate () {
+    if (this.destroyed || --this.activity > 0) return
+
+    this.timeout = setTimeout(this.onInactive, this.poolLinger)
   }
 }
 
