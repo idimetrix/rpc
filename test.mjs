@@ -40,10 +40,7 @@ test('default encoding', async (t) => {
 
   const client = rpc.connect(server.publicKey)
 
-  t.alike(
-    await client.request('echo', 'hello world'),
-    'hello world'
-  )
+  t.alike(await client.request('echo', 'hello world'), 'hello world')
 
   await rpc.destroy()
 })
@@ -125,7 +122,10 @@ test('add responder after connection', async (t) => {
 
   const client = rpc.connect(server.publicKey)
 
-  await t.exception(client.request('echo', Buffer.alloc(0)), /unknown method 'echo'/)
+  await t.exception(
+    client.request('echo', Buffer.alloc(0)),
+    /unknown method 'echo'/
+  )
 
   server.respond('echo', (req) => req)
 

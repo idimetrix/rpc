@@ -2,3 +2,5 @@ node_modules/
 coverage/
 sandbox
 package-lock.json
+yarn.lock
+.idea

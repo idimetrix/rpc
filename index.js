@@ -6,17 +6,15 @@ const b4a = require('b4a')
 const POOL_LINGER = 10000
 
 module.exports = class HyperswarmRPC {
-  constructor (options = {}) {
-    const {
-      valueEncoding,
-      seed,
-      keyPair = DHT.keyPair(seed),
-      bootstrap,
-      debug,
-      dht,
-      poolLinger = POOL_LINGER
-    } = options
-
+  constructor ({
+    valueEncoding,
+    seed,
+    keyPair = DHT.keyPair(seed),
+    bootstrap,
+    debug,
+    dht,
+    poolLinger = POOL_LINGER
+  } = {}) {
     this._dht = dht || new DHT({ keyPair, bootstrap, debug })
     this._defaultKeyPair = keyPair
     this._defaultValueEncoding = valueEncoding
@@ -117,10 +115,14 @@ module.exports = class HyperswarmRPC {
 
     if (ref) return ref
 
-    ref = new ClientRef(this.connect(publicKey, options), this._poolLinger, () => {
-      if (this._pool.get(id) === ref) this._pool.delete(id)
-      ref.destroy()
-    })
+    ref = new ClientRef(
+      this.connect(publicKey, options),
+      this._poolLinger,
+      () => {
+        if (this._pool.get(id) === ref) this._pool.delete(id)
+        ref.destroy()
+      }
+    )
 
     this._pool.set(id, ref)
 
