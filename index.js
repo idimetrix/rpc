@@ -23,7 +23,6 @@ module.exports = class HyperswarmRPC {
 
     this._clients = new Set()
     this._servers = new Set()
-
     this._pool = new Map()
   }
 
@@ -42,35 +41,25 @@ module.exports = class HyperswarmRPC {
       this._defaultValueEncoding,
       options
     )
-
     this._servers.add(server)
     server.on('close', () => this._servers.delete(server))
-
     return server
   }
 
   async request (publicKey, method, value, options) {
-    const ref = this._getCachedClient(publicKey, options)
-
-    ref.activate()
-
-    try {
-      return ref.client.request(method, value, options)
-    } finally {
-      await ref.deactivate()
-    }
+    return this._handleClientRequest(
+      publicKey,
+      (client) => client.request(method, value, options),
+      options
+    )
   }
 
   event (publicKey, method, value, options) {
-    const ref = this._getCachedClient(publicKey, options)
-
-    ref.activate()
-
-    try {
-      ref.client.event(method, value, options)
-    } finally {
-      ref.deactivate()
-    }
+    this._handleClientRequest(
+      publicKey,
+      (client) => client.event(method, value, options),
+      options
+    )
   }
 
   connect (publicKey, options = {}) {
@@ -80,42 +69,38 @@ module.exports = class HyperswarmRPC {
       publicKey,
       options
     )
-
     this._clients.add(client)
     client.on('close', () => this._clients.delete(client))
-
     return client
   }
 
-  async destroy (options = {}) {
-    if (!options.force) {
-      const closing = []
-
-      for (const server of this._servers) {
-        closing.push(server.close())
-      }
-
-      await Promise.allSettled(closing)
+  async destroy ({ force = false } = {}) {
+    if (!force) {
+      await Promise.allSettled(
+        [...this._servers].map((server) => server.close())
+      )
     }
 
-    for (const client of this._clients.values()) {
-      client.destroy()
-    }
-
-    for (const ref of this._pool.values()) {
-      ref.destroy()
-    }
-
+    this._clients.forEach((client) => client.destroy())
+    this._pool.forEach((ref) => ref.destroy())
     if (this._autoDestroy) await this._dht.destroy()
+  }
+
+  _handleClientRequest (publicKey, action, options) {
+    const ref = this._getCachedClient(publicKey, options)
+    ref.activate()
+    try {
+      return action(ref.client)
+    } finally {
+      ref.deactivate()
+    }
   }
 
   _getCachedClient (publicKey, options) {
     const id = b4a.toString(publicKey, 'hex')
-    let ref = this._pool.get(id)
+    if (this._pool.has(id)) return this._pool.get(id)
 
-    if (ref) return ref
-
-    ref = new ClientRef(
+    const ref = new ClientRef(
       this.connect(publicKey, options),
       this._poolLinger,
       () => {
@@ -125,7 +110,6 @@ module.exports = class HyperswarmRPC {
     )
 
     this._pool.set(id, ref)
-
     return ref
   }
 }
@@ -166,44 +150,40 @@ class ClientRef {
     this.timeout = setTimeout(this.onInactive, this.poolLinger)
   }
 }
-
 class Client extends EventEmitter {
-  constructor (dht, defaultValueEncoding, publicKey, options = {}) {
+  constructor (dht, valueEncoding, publicKey, options = {}) {
     super()
-
     this._dht = dht
-    this._defaultValueEncoding = defaultValueEncoding
+    this._valueEncoding = valueEncoding
     this._publicKey = publicKey
 
-    this._stream = this._dht.connect(publicKey, options)
-    this._stream.setKeepAlive(5000)
+    this._initializeStream(options)
+    this._initializeRPC()
+  }
 
+  _initializeStream (options) {
+    this._stream = this._dht.connect(this._publicKey, options)
+    this._stream.setKeepAlive(5000)
+    this._stream.userData = this._rpc?.mux // Set userData for Hypercore replication if RPC exists
+  }
+
+  _initializeRPC () {
     this._rpc = new ProtomuxRPC(this._stream, {
-      id: publicKey,
-      valueEncoding: this._defaultValueEncoding
+      id: this._publicKey,
+      valueEncoding: this._valueEncoding
     })
     this._rpc
-      .on('open', this._onopen.bind(this))
-      .on('close', this._onclose.bind(this))
-      .on('destroy', this._ondestroy.bind(this))
-
-    // For Hypercore replication
-    this._stream.userData = this._rpc.mux
+      .on('open', () => this.emit('open'))
+      .on('close', () => this._handleClose())
+      .on('destroy', () => this.emit('destroy'))
   }
 
-  _onopen () {
-    this.emit('open')
-  }
-
-  _onclose () {
+  _handleClose () {
     this._stream.destroy()
     this.emit('close')
   }
 
-  _ondestroy () {
-    this.emit('destroy')
-  }
-
+  // Accessors for properties
   get dht () {
     return this._dht
   }
@@ -224,6 +204,7 @@ class Client extends EventEmitter {
     return this._rpc.stream
   }
 
+  // Methods for RPC requests and events
   async request (method, value, options = {}) {
     return this._rpc.request(method, value, options)
   }
